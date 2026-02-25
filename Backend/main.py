@@ -10,9 +10,13 @@ import shutil
 import sqlite3
 from datetime import timedelta
 from typing import Optional
-# import logging
+import asyncio
+from docx import Document
+from collections import defaultdict
 
-from rag_docling import process_document, search_chunks, detect_format
+# import logging
+# Update this line (around line 17)
+from rag_docling import process_document, search_chunks, detect_format, collection, get_chunks_by_doc, get_tables_by_doc
 from auth import (
     init_db, create_user, get_user, verify_password, create_access_token,
     get_current_user, Token, ACCESS_TOKEN_EXPIRE_MINUTES, create_document,
@@ -46,7 +50,8 @@ chat_history_manager = ChatHistoryManager()
 
 # Use Groq client
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
+print(os.getenv("GROQ_API_KEY"))
+ 
 app = FastAPI()
 
 # Add CORS middleware
@@ -296,8 +301,7 @@ Return your response as JSON in this exact format:
             detail=f"Error generating response: {str(e)}"
         )
 
-
-
+# 
 
 
         
@@ -796,6 +800,9 @@ async def transcribe_audio(file: UploadFile = File(...), current_user: dict = De
         return {"text": transcription.text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+
 
 @app.post("/voice/speak")
 async def text_to_speech(text: str = Form(...), current_user: dict = Depends(get_current_user)):
@@ -811,10 +818,321 @@ async def text_to_speech(text: str = Form(...), current_user: dict = Depends(get
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ----- Debug Endpoints -----
+
+@app.get("/debug/vector-db")
+async def debug_db(current_user: dict = Depends(get_current_user)):
+    """
+    Check the status of the ChromaDB collection.
+    Requires authentication.
+    """
+    try:
+        # returns the total number of items in your vector database
+        count = collection.count()
+        return {
+            "status": "connected",
+            "collection_name": "docling_chunks",
+            "total_stored_chunks": count,
+            "user_id": current_user["id"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Vector DB Error: {str(e)}")
+    
 # ----- Progress Endpoint -----
 
+
+
+@app.post("/generate-report")
+async def generate_report(
+    doc_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    # -----------------------------
+    # 1. AUTH CHECK
+    # -----------------------------
+    owner_id = get_document_owner(doc_id)
+    if owner_id != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    # -----------------------------
+    # 2. FETCH DOC CHUNKS
+    # -----------------------------
+    chunks = get_chunks_by_doc(
+        doc_id=doc_id,
+        user_id=current_user["id"]
+    )
+
+    if not chunks:
+        raise HTTPException(status_code=404, detail="No document content found in database.")
+
+    # -----------------------------
+    # 3. TAKE CONTENT SAFELY (WITH FALLBACK)
+    # -----------------------------
+    selected_text = []
+    selected_pages = set()
+
+    for c in chunks:
+        # Safely get page number. Default to 1 if it's an image/has no page metadata.
+        # Allow 0, 1, and 2 in case the parser uses 0-based indexing.
+        page_num = c.get("page", 1)
+        if page_num in [0, 1, 2]:
+            selected_text.append(c.get("text", ""))
+            selected_pages.add(page_num)
+
+    # FALLBACK: If strict page filtering found nothing, just take the first 15 chunks
+    if not selected_text:
+        for c in chunks[:15]:
+            selected_text.append(c.get("text", ""))
+            selected_pages.add(c.get("page", 1))
+
+    if not selected_text:
+        raise HTTPException(status_code=404, detail="No extractable text found to generate report.")
+
+    combined_text = "\n\n".join(selected_text)
+
+    # -----------------------------
+    # 4. FETCH RAW TABLES SAFELY
+    # -----------------------------
+    raw_tables = get_tables_by_doc(
+        doc_id=doc_id,
+        user_id=current_user["id"]
+    )
+
+    # Filter tables for pages 0, 1, 2
+    page_filtered_tables = [
+        t for t in raw_tables
+        if t.get("page", 1) in [0, 1, 2]
+    ]
+    
+    # Fallback: if no tables match the page filter, but tables DO exist, take the first 3
+    if not page_filtered_tables and raw_tables:
+        page_filtered_tables = raw_tables[:3]
+
+    table_summary_lines = []
+    for t_idx, t in enumerate(page_filtered_tables):
+        table_summary_lines.append(f"\n[TABLE {t_idx + 1} — Page {t.get('page', 1)}]")
+        for row in t.get("rows", []):
+            table_summary_lines.append(" | ".join(str(cell).strip() for cell in row))
+
+    table_summary_text = "\n".join(table_summary_lines) if table_summary_lines else ""
+
+    full_content_for_llm = combined_text
+    if table_summary_text:
+        full_content_for_llm += "\n\n--- STRUCTURED TABLES FROM DOCUMENT ---\n" + table_summary_text
+
+    # -----------------------------
+    # 5. LLM – METALLURGICAL EXTRACTION
+    # -----------------------------
+    prompt = f"""
+You are a senior metallurgical engineer.
+
+Extract structured metallurgical information
+from the given document content.
+
+The content below includes both paragraph text and structured tables
+extracted directly from the source document.
+Prefer table data for chemical composition and mechanical properties
+since it is more precise than narrative text.
+
+STRICT RULES:
+- No assumptions
+- Preserve units, limits, standards
+- If missing, write "Not specified"
+
+Return JSON ONLY:
+
+{{
+  "header": {{
+    "material": "",
+    "standard": "",
+    "doc_no": "CRM/MS/01"
+  }},
+  "scope": "",
+  "specifications": {{
+    "code": "",
+    "colour": "",
+    "equivalent_specs": [],
+    "standards": []
+  }},
+  "chemical_composition": {{
+    "min": {{}},
+    "max": {{}}
+  }},
+  "mechanical_properties": [
+    {{
+      "property": "",
+      "min": "",
+      "max": "",
+      "unit": ""
+    }}
+  ],
+  "metallurgical_properties": {{
+    "grain_size": "",
+    "inclusion_rating": "",
+    "microstructure": "",
+    "surface_condition": "",
+    "heat_treatment": ""
+  }}
+}}
+
+SOURCE PAGES: {sorted(list(selected_pages))}
+
+CONTENT:
+{full_content_for_llm}
+"""
+
+    response = await asyncio.to_thread(
+        client.chat.completions.create,
+        model=LLM_MODEL, # Ensure this variable is defined globally
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.1,
+        response_format={"type": "json_object"}
+    )
+
+    data = json.loads(response.choices[0].message.content)
+
+    # -----------------------------
+    # 6. CREATE METALLURGY DOCX
+    # -----------------------------
+    os.makedirs("reports", exist_ok=True)
+    report_path = f"reports/doc_{doc_id}_metallurgy_report.docx"
+
+    doc = Document()
+
+    # -------- HEADER TABLE --------
+    header = doc.add_table(rows=2, cols=4)
+    header.style = "Table Grid"
+
+    header.cell(0, 1).text = "Materials & Metallurgy Group"
+    header.cell(0, 3).text = data.get("header", {}).get("doc_no", "N/A")
+
+    header.cell(1, 1).text = "Material Specification"
+    header.cell(1, 2).text = data.get("header", {}).get("material", "N/A")
+
+    doc.add_paragraph("")
+
+    # -------- 1. SCOPE --------
+    doc.add_heading("1. SCOPE", level=2)
+    doc.add_paragraph(data.get("scope", "Not specified"))
+
+    # -------- 2. SPECIFICATIONS --------
+    doc.add_heading("2. SPECIFICATIONS", level=2)
+    spec_table = doc.add_table(rows=4, cols=2)
+    spec_table.style = "Table Grid"
+
+    specs = data.get("specifications", {})
+    spec_table.cell(0, 0).text = "Code"
+    spec_table.cell(0, 1).text = specs.get("code", "-")
+
+    spec_table.cell(1, 0).text = "Colour"
+    spec_table.cell(1, 1).text = specs.get("colour", "-")
+
+    spec_table.cell(2, 0).text = "Equivalent Specs"
+    spec_table.cell(2, 1).text = ", ".join(specs.get("equivalent_specs", []))
+
+    spec_table.cell(3, 0).text = "Standards"
+    spec_table.cell(3, 1).text = ", ".join(specs.get("standards", []))
+
+    # -------- 3. CHEMICAL COMPOSITION --------
+    doc.add_heading("3. CHEMICAL COMPOSITION", level=2)
+
+    chem = data.get("chemical_composition", {"min": {}, "max": {}})
+    elements = list(chem.get("min", {}).keys())
+
+    if elements:
+        chem_table = doc.add_table(rows=3, cols=len(elements) + 1)
+        chem_table.style = "Table Grid"
+
+        chem_table.cell(0, 0).text = "Element"
+        for i, el in enumerate(elements):
+            chem_table.cell(0, i + 1).text = str(el)
+
+        chem_table.cell(1, 0).text = "Min"
+        chem_table.cell(2, 0).text = "Max"
+
+        for i, el in enumerate(elements):
+            chem_table.cell(1, i + 1).text = str(chem.get("min", {}).get(el, "-"))
+            chem_table.cell(2, i + 1).text = str(chem.get("max", {}).get(el, "-"))
+    else:
+        doc.add_paragraph("Not specified")
+
+    # -------- 4. MECHANICAL PROPERTIES --------
+    doc.add_heading("4. MECHANICAL PROPERTIES", level=2)
+
+    mech_props = data.get("mechanical_properties", [])
+    if mech_props:
+        mech_table = doc.add_table(rows=1, cols=4)
+        mech_table.style = "Table Grid"
+
+        hdr = mech_table.rows[0].cells
+        hdr[0].text = "Property"
+        hdr[1].text = "Min"
+        hdr[2].text = "Max"
+        hdr[3].text = "Unit"
+
+        for m in mech_props:
+            row = mech_table.add_row().cells
+            row[0].text = str(m.get("property", "-"))
+            row[1].text = str(m.get("min", "-"))
+            row[2].text = str(m.get("max", "-"))
+            row[3].text = str(m.get("unit", "-"))
+    else:
+        doc.add_paragraph("Not specified")
+
+    # -------- 5. METALLURGICAL PROPERTIES --------
+    doc.add_heading("5. METALLURGICAL PROPERTIES", level=2)
+
+    mp = data.get("metallurgical_properties", {})
+    doc.add_paragraph(f"Grain Size: {mp.get('grain_size', '-')}")
+    doc.add_paragraph(f"Inclusion Rating: {mp.get('inclusion_rating', '-')}")
+    doc.add_paragraph(f"Microstructure: {mp.get('microstructure', '-')}")
+    doc.add_paragraph(f"Surface Condition: {mp.get('surface_condition', '-')}")
+    doc.add_paragraph(f"Heat Treatment: {mp.get('heat_treatment', '-')}")
+
+    # -------- 6. RAW TABLES FROM DOCUMENT --------
+    if page_filtered_tables:
+        doc.add_heading("6. RAW TABLES FROM SOURCE DOCUMENT", level=2)
+        doc.add_paragraph(
+            "The following tables were extracted directly from the source document. "
+            "They are included here for reference and traceability."
+        )
+
+        for t_idx, t in enumerate(page_filtered_tables):
+            rows = t.get("rows", [])
+
+            if not rows or all(len(r) == 0 for r in rows):
+                continue
+
+            doc.add_paragraph(f"Table {t_idx + 1}  (Source Page: {t.get('page', 'Unknown')})")
+
+            col_count = max(len(r) for r in rows)
+            if col_count == 0:
+                continue
+
+            raw_table = doc.add_table(rows=len(rows), cols=col_count)
+            raw_table.style = "Table Grid"
+
+            for r_idx, row_cells in enumerate(rows):
+                for c_idx in range(col_count):
+                    cell_text = str(row_cells[c_idx]).strip() if c_idx < len(row_cells) else ""
+                    raw_table.cell(r_idx, c_idx).text = cell_text
+
+            doc.add_paragraph("") 
+
+    # -------- FOOTER --------
+    doc.add_paragraph(f"Source Pages: {sorted(list(selected_pages))}")
+
+    doc.save(report_path)
+
+    # -----------------------------
+    # 7. RETURN FILE
+    # -----------------------------
+    return FileResponse(
+        report_path,
+        filename=f"doc_{doc_id}_Metallurgy_Report.docx",
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
 # @app.get("/ingest/progress/{doc_id}")
 # async def get_ingest_progress(doc_id: str):
-#     return upload_progress.get(doc_id, {"status": "unknown", "percentage": 0})
-
-                                
+#     return upload_progress.get(doc_id, {"status": "unknown", "percentage": 0}

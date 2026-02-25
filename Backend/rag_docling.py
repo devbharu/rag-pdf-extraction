@@ -640,3 +640,204 @@ def detect_format(filename: str) -> str:
     }
     
     return format_map.get(ext, 'Unknown')
+
+
+def get_chunks_by_doc(doc_id, user_id) -> List[Dict[str, Any]]:
+    """Fetch ALL stored chunks for a given document from ChromaDB."""
+    try:
+        # Check integer matching first (most likely scenario)
+        results = collection.get(
+            where={
+                "$and": [
+                    {"user_id": int(user_id)},
+                    {"doc_id": int(doc_id)},
+                ]
+            },
+            include=["documents", "metadatas"],
+        )
+        
+        # Fallback to string matching if nothing found (just in case)
+        if not results or not results.get("documents"):
+            results = collection.get(
+                where={
+                    "$and": [
+                        {"user_id": str(user_id)},
+                        {"doc_id": str(doc_id)},
+                    ]
+                },
+                include=["documents", "metadatas"],
+            )
+
+        chunks: List[Dict[str, Any]] = []
+
+        if not results or not results.get("documents"):
+            logger.warning(f"No chunks found for doc_id={doc_id}, user_id={user_id}")
+            return chunks
+
+        for text, meta in zip(results["documents"], results["metadatas"]):
+            if not text or not text.strip():
+                continue
+            chunks.append({
+                "text":          text,
+                "page":          meta.get("page", 0),
+                "section":       meta.get("section", ""),
+                "content_types": meta.get("content_types", ""),
+                "filename":      meta.get("filename", ""),
+                "chunk_index":   meta.get("chunk_index", -1),
+            })
+
+        chunks.sort(key=lambda c: (c["page"], c["chunk_index"]))
+        return chunks
+
+    except Exception as e:
+        logger.error(f"get_chunks_by_doc error: {str(e)}", exc_info=True)
+        return []
+
+
+def get_tables_by_doc(doc_id, user_id) -> List[Dict[str, Any]]:
+    """Fetch ONLY table-type chunks for a given document from ChromaDB."""
+    try:
+        results = collection.get(
+            where={
+                "$and": [
+                    {"user_id": int(user_id)},
+                    {"doc_id": int(doc_id)},
+                    {"content_types": {"$contains": "table"}},
+                ]
+            },
+            include=["documents", "metadatas"],
+        )
+
+        # Fallback to string metadata
+        if not results or not results.get("documents"):
+            results = collection.get(
+                where={
+                    "$and": [
+                        {"user_id": str(user_id)},
+                        {"doc_id": str(doc_id)},
+                        {"content_types": {"$contains": "table"}},
+                    ]
+                },
+                include=["documents", "metadatas"],
+            )
+
+        tables: List[Dict[str, Any]] = []
+
+        if not results or not results.get("documents"):
+            return tables
+
+        for text, meta in zip(results["documents"], results["metadatas"]):
+            if not text or not text.strip():
+                continue
+
+            rows: List[List[str]] = []
+            for line in text.splitlines():
+                line = line.strip()
+                if not line: continue
+                cells = [cell.strip() for cell in line.split("|")]
+                if any(cells): rows.append(cells)
+
+            if not rows: rows = [[text]]
+
+            tables.append({
+                "page": meta.get("page", 0),
+                "rows": rows,
+                "text": text,
+            })
+
+        tables.sort(key=lambda t: t["page"])
+        return tables
+
+    except Exception as e:
+        logger.error(f"get_tables_by_doc error: {str(e)}", exc_info=True)
+        return []
+ 
+    """
+    Fetch ONLY table-type chunks for a given document from ChromaDB.
+
+    Docling tags table content with content_types = "TableItem" (or a string
+    containing "table").  This function filters on that tag and reconstructs
+    the row/column structure from the stored text so the report generator can
+    render proper Word tables.
+
+    How table text is stored
+    ─────────────────────────
+    When HybridChunker extracts a table it serialises it as pipe-separated
+    rows, e.g.:
+
+        Element | C    | Si   | Mn
+        Min     | 0.15 | 0.10 | 0.60
+        Max     | 0.25 | 0.35 | 0.90
+
+    This function splits each line on "|" to recover the original cell values.
+
+    Args:
+        doc_id  : Document ID.
+        user_id : Owner's user ID.
+
+    Returns:
+        List of dicts, each containing:
+            - page  : Page number of the table.
+            - rows  : List[List[str]] — each inner list is one row of cells.
+            - text  : Raw text of the chunk (for debugging / fallback use).
+    """
+    try:
+        results = collection.get(
+            where={
+                "$and": [
+                    {"user_id":       {"$eq": str(user_id)}},
+                    {"doc_id":        {"$eq": str(doc_id)}},
+                    {"content_types": {"$contains": "table"}},   # ChromaDB string filter
+                ]
+            },
+            include=["documents", "metadatas"],
+        )
+
+        tables: List[Dict[str, Any]] = []
+
+        if not results or not results.get("documents"):
+            logger.info(
+                f"No table chunks found for doc_id={doc_id}, user_id={user_id}"
+            )
+            return tables
+
+        for text, meta in zip(results["documents"], results["metadatas"]):
+            if not text or not text.strip():
+                continue
+
+            # ── Reconstruct rows from pipe-separated text ──────────────────
+            rows: List[List[str]] = []
+            for line in text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                # Split on pipe; strip each cell; skip fully empty rows
+                cells = [cell.strip() for cell in line.split("|")]
+                if any(cells):          # keep row only if at least one cell has content
+                    rows.append(cells)
+
+            # Even if we cannot parse rows, store the raw text as a single-cell row
+            # so the report never silently loses a table.
+            if not rows:
+                rows = [[text]]
+
+            tables.append(
+                {
+                    "page": meta.get("page", 0),
+                    "rows": rows,
+                    "text": text,
+                }
+            )
+
+        # Sort tables by page number for natural document order
+        tables.sort(key=lambda t: t["page"])
+
+        logger.info(
+            f"get_tables_by_doc → {len(tables)} tables "
+            f"(doc_id={doc_id}, user_id={user_id})"
+        )
+        return tables
+
+    except Exception as e:
+        logger.error(f"get_tables_by_doc error: {str(e)}", exc_info=True)
+        return []

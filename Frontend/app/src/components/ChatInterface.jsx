@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { Send, Upload, FileText, LogOut, ChevronRight, MessageSquare, Plus, X, Globe, ExternalLink, Bot, User, Activity, Mic, Volume2, Trash2, History, MoreHorizontal, StopCircle } from 'lucide-react';
+// ADDED: FileDown and Loader2 for the report generation button
+import { Send, Upload, FileText, LogOut, ChevronRight, MessageSquare, Plus, X, Globe, ExternalLink, Bot, User, Activity, Mic, Volume2, Trash2, History, MoreHorizontal, StopCircle, Image as ImageIcon, FileDown, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import PDFViewer from './PDFViewer';
 
-// UPDATE: Changed API base URL
 const API_BASE_URL = 'http://127.0.0.1:8000';
 
 const ChatInterface = () => {
@@ -15,17 +15,23 @@ const ChatInterface = () => {
   const [input, setInput] = useState('');
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
-  const [activePdf, setActivePdf] = useState(null);
+
+  const [activeMedia, setActiveMedia] = useState(null);
+  const [activeMediaType, setActiveMediaType] = useState(null);
   const [activeDocId, setActiveDocId] = useState(null);
   const [activePage, setActivePage] = useState(1);
+
+  // ADDED: Loading state for report generation
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+
   const [documents, setDocuments] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [webSearchMode, setWebSearchMode] = useState(false);
   const [diagnosticMode, setDiagnosticMode] = useState(false);
-  const [sidebarMode, setSidebarMode] = useState('documents'); // 'documents' or 'history'
+  const [sidebarMode, setSidebarMode] = useState('documents');
   const [isRecording, setIsRecording] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(null); // Message ID being spoken
+  const [isSpeaking, setIsSpeaking] = useState(null);
 
   const messagesEndRef = useRef(null);
   const mediaRecorderRef = useRef(null);
@@ -72,7 +78,8 @@ const ChatInterface = () => {
       setSessions(prev => [{ id: response.data.session_id, title: "New Chat", updated_at: new Date().toISOString() }, ...prev]);
       setCurrentSessionId(response.data.session_id);
       setMessages([]);
-      setActivePdf(null);
+      setActiveMedia(null);
+      setActiveMediaType(null);
       setActiveDocId(null);
     } catch (error) {
       console.error("Failed to create session", error);
@@ -114,7 +121,7 @@ const ChatInterface = () => {
       }, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      fetchSessions(); // Update title/timestamp
+      fetchSessions();
     } catch (error) {
       console.error("Failed to save message", error);
     }
@@ -148,7 +155,8 @@ const ChatInterface = () => {
       const docId = response.data.doc_id;
       await fetchDocuments();
       setActiveDocId(docId);
-      setActivePdf(file);
+      setActiveMedia(file);
+      setActiveMediaType(file.type);
 
       const sysMsg = `File "${file.name}" processed successfully.`;
       setMessages(prev => [...prev, { role: 'system', content: sysMsg }]);
@@ -161,6 +169,44 @@ const ChatInterface = () => {
       console.error("Upload failed", error);
       setMessages(prev => [...prev, { role: 'system', content: 'Failed to upload file.' }]);
       setUploading(false);
+    }
+  };
+
+  // ADDED: Report Generation Logic
+  const handleGenerateReport = async () => {
+    if (!activeDocId) return;
+    setIsGeneratingReport(true);
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/generate-report`, null, {
+        params: { doc_id: activeDocId },
+        headers: { 'Authorization': `Bearer ${token}` },
+        responseType: 'blob' // Essential for downloading files like .docx
+      });
+
+      // Create a temporary link to trigger the browser download
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      // Extract filename from activeMedia or use default
+      const originalName = activeMedia?.name ? activeMedia.name.split('.')[0] : `Doc_${activeDocId}`;
+      link.setAttribute('download', `${originalName}_Metallurgy_Report.docx`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+
+      const sysMsg = `Metallurgy report generated and downloaded successfully.`;
+      setMessages(prev => [...prev, { role: 'system', content: sysMsg }]);
+      if (currentSessionId) saveMessageToHistory('system', sysMsg);
+
+    } catch (error) {
+      console.error("Report generation failed", error);
+      const errorMsg = error.response?.status === 404
+        ? 'Failed to generate report. Make sure pages 1-2 contain valid metallurgical data.'
+        : 'Error generating report. Please try again.';
+      setMessages(prev => [...prev, { role: 'system', content: errorMsg }]);
+    } finally {
+      setIsGeneratingReport(false);
     }
   };
 
@@ -415,11 +461,13 @@ const ChatInterface = () => {
         headers: { 'Authorization': `Bearer ${token}` },
         responseType: 'blob'
       });
-      const fileObj = new File([response.data], doc.filename, { type: 'application/pdf' });
-      setActivePdf(fileObj);
+      const contentType = response.data.type || 'application/pdf';
+      const fileObj = new File([response.data], doc.filename, { type: contentType });
+      setActiveMedia(fileObj);
+      setActiveMediaType(contentType);
       setMessages(prev => [...prev, { role: 'system', content: `Switched context to "${doc.filename}".` }]);
     } catch (error) {
-      console.error("Failed to load PDF", error);
+      console.error("Failed to load document", error);
     }
   };
 
@@ -458,10 +506,10 @@ const ChatInterface = () => {
               <div className="mb-6">
                 <h3 className="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-3 pl-2">Upload Document</h3>
                 <div className="flex flex-col gap-2">
-                  <input type="file" accept=".pdf" onChange={handleFileChange} className="hidden" id="file-upload" />
+                  <input type="file" accept=".pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.tiff,.html" onChange={handleFileChange} className="hidden" id="file-upload" />
                   <label htmlFor="file-upload" className="flex items-center justify-center px-3 py-2.5 bg-white hover:bg-stone-50 rounded-xl cursor-pointer transition-all border border-stone-200 hover:border-stone-300 hover:shadow-md text-xs text-stone-600 shadow-sm group">
                     <Plus size={14} strokeWidth={2} className="mr-2 text-stone-400 group-hover:text-stone-600 transition-colors" />
-                    {file ? <span className="font-medium text-stone-900">{file.name.substring(0, 15)}...</span> : 'Select PDF'}
+                    {file ? <span className="font-medium text-stone-900">{file.name.substring(0, 15)}...</span> : 'Select File'}
                   </label>
                   <button onClick={handleUpload} disabled={!file || uploading} className={`flex items-center justify-center px-3 py-2.5 rounded-xl text-xs font-semibold transition-all shadow-sm ${!file || uploading ? 'bg-stone-100 text-stone-400 cursor-not-allowed' : 'bg-gradient-to-r from-stone-900 to-stone-800 hover:from-stone-800 hover:to-stone-700 text-white shadow-md hover:shadow-lg'}`}>
                     {uploading ? (
@@ -470,7 +518,7 @@ const ChatInterface = () => {
                         Processing...
                       </span>
                     ) : (
-                      <> <Upload size={14} strokeWidth={2} className="mr-2" /> Upload PDF </>
+                      <> <Upload size={14} strokeWidth={2} className="mr-2" /> Upload File </>
                     )}
                   </button>
                 </div>
@@ -479,16 +527,23 @@ const ChatInterface = () => {
               <div>
                 <h3 className="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-3 pl-2">Your Documents</h3>
                 <div className="space-y-1">
-                  <button onClick={() => { setActiveDocId(null); setMessages(prev => [...prev, { role: 'system', content: 'Switched to All Documents context.' }]); }} className={`w-full flex items-center px-3 py-2.5 rounded-xl text-xs transition-all ${activeDocId === null ? 'bg-gradient-to-r from-teal-50 to-blue-50 text-teal-700 shadow-sm border border-teal-200 font-semibold' : 'text-stone-500 hover:bg-white hover:text-stone-700 hover:shadow-sm'}`}>
+                  <button onClick={() => { setActiveDocId(null); setActiveMedia(null); setActiveMediaType(null); setMessages(prev => [...prev, { role: 'system', content: 'Switched to All Documents context.' }]); }} className={`w-full flex items-center px-3 py-2.5 rounded-xl text-xs transition-all ${activeDocId === null ? 'bg-gradient-to-r from-teal-50 to-blue-50 text-teal-700 shadow-sm border border-teal-200 font-semibold' : 'text-stone-500 hover:bg-white hover:text-stone-700 hover:shadow-sm'}`}>
                     <MessageSquare size={14} strokeWidth={2} className={`mr-2.5 ${activeDocId === null ? 'text-teal-600' : 'text-stone-400'}`} />
                     All Documents
                   </button>
-                  {documents.map(doc => (
-                    <button key={doc.id} onClick={() => selectDocument(doc)} className={`w-full flex items-center px-3 py-2.5 rounded-xl text-xs transition-all ${activeDocId === doc.id ? 'bg-gradient-to-r from-teal-50 to-blue-50 text-teal-700 shadow-sm border border-teal-200 font-semibold' : 'text-stone-500 hover:bg-white hover:text-stone-700 hover:shadow-sm'}`}>
-                      <FileText size={14} strokeWidth={2} className={`mr-2.5 ${activeDocId === doc.id ? 'text-teal-600' : 'text-stone-400'}`} />
-                      <span className="truncate text-left">{doc.filename}</span>
-                    </button>
-                  ))}
+                  {documents.map(doc => {
+                    const isImg = doc.filename.match(/\.(jpg|jpeg|png|tiff)$/i);
+                    return (
+                      <button key={doc.id} onClick={() => selectDocument(doc)} className={`w-full flex items-center px-3 py-2.5 rounded-xl text-xs transition-all ${activeDocId === doc.id ? 'bg-gradient-to-r from-teal-50 to-blue-50 text-teal-700 shadow-sm border border-teal-200 font-semibold' : 'text-stone-500 hover:bg-white hover:text-stone-700 hover:shadow-sm'}`}>
+                        {isImg ? (
+                          <ImageIcon size={14} strokeWidth={2} className={`mr-2.5 ${activeDocId === doc.id ? 'text-teal-600' : 'text-stone-400'}`} />
+                        ) : (
+                          <FileText size={14} strokeWidth={2} className={`mr-2.5 ${activeDocId === doc.id ? 'text-teal-600' : 'text-stone-400'}`} />
+                        )}
+                        <span className="truncate text-left">{doc.filename}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </>
@@ -524,7 +579,7 @@ const ChatInterface = () => {
 
       {/* Main Content */}
       <div className="flex-1 flex relative bg-gradient-to-br from-stone-50 via-white to-stone-50">
-        <div className={`flex-1 flex flex-col ${activePdf ? 'w-1/2' : 'w-full'} transition-all duration-500 ease-in-out`}>
+        <div className={`flex-1 flex flex-col ${activeMedia ? 'w-1/2' : 'w-full'} transition-all duration-500 ease-in-out`}>
           <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth">
             {messages.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full text-stone-400 animate-fade-in">
@@ -532,7 +587,7 @@ const ChatInterface = () => {
                   <MessageSquare size={32} strokeWidth={1.5} className="text-stone-400" />
                 </div>
                 <p className="text-lg font-semibold text-stone-700 mb-2">Welcome to RAG Chatbot</p>
-                <p className="text-sm text-stone-500 max-w-md text-center">Select a document, upload a PDF, or use web search to get started</p>
+                <p className="text-sm text-stone-500 max-w-md text-center">Select a document, upload a file or image, or use web search to get started</p>
               </div>
             )}
 
@@ -625,21 +680,38 @@ const ChatInterface = () => {
           </div>
         </div>
 
-        {activePdf && (
+        {activeMedia && (
           <div className="w-1/2 border-l border-stone-200 bg-stone-50 flex flex-col shadow-xl z-10">
             <div className="p-3 border-b border-stone-200 flex justify-between items-center bg-white">
               <div className="flex items-center gap-2 overflow-hidden">
-                <div className="p-1 bg-red-50 rounded">
-                  <FileText size={14} className="text-red-500" />
+                <div className={`p-1 rounded ${activeMediaType?.startsWith('image/') ? 'bg-blue-50' : 'bg-red-50'}`}>
+                  {activeMediaType?.startsWith('image/') ? (
+                    <ImageIcon size={14} className="text-blue-500" />
+                  ) : (
+                    <FileText size={14} className="text-red-500" />
+                  )}
                 </div>
-                <span className="text-xs font-semibold text-stone-700 truncate">{activePdf.name}</span>
+                <span className="text-xs font-semibold text-stone-700 truncate">{activeMedia.name}</span>
               </div>
-              <button onClick={() => setActivePdf(null)} className="p-1.5 hover:bg-stone-100 rounded-full text-stone-400 hover:text-stone-600 transition-colors">
-                <X size={16} />
-              </button>
+
+              {/* ADDED: Report button logic here alongside the close button */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleGenerateReport}
+                  disabled={isGeneratingReport}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 border border-indigo-100"
+                  title="Generate Metallurgy Report"
+                >
+                  {isGeneratingReport ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
+                  {isGeneratingReport ? 'Generating...' : 'Report'}
+                </button>
+                <button onClick={() => { setActiveMedia(null); setActiveMediaType(null); }} className="p-1.5 hover:bg-stone-100 rounded-full text-stone-400 hover:text-stone-600 transition-colors">
+                  <X size={16} />
+                </button>
+              </div>
             </div>
             <div className="flex-1 overflow-hidden relative bg-stone-100/50">
-              <PDFViewer file={activePdf} pageNumber={activePage} />
+              <PDFViewer file={activeMedia} pageNumber={activePage} type={activeMediaType} />
             </div>
           </div>
         )}
@@ -648,4 +720,4 @@ const ChatInterface = () => {
   );
 };
 
-export default ChatInterface
+export default ChatInterface;
