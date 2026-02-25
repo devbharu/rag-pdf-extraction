@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+dist-ssr/
+.storybook-out/
+storybook-static/
+
+# Framework caches
+.vite/
+node_modules/.vite/
+.next/
+.turbo/
+.cache/
+.parcel-cache/
+.sass-cache/
+.swc/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.log
+
+# Testing / coverage
+coverage/
+
+# IDE / tooling
+.vscode/
+.idea/
+*.iml
+.eslintcache
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Hosting providers
+.vercel/
+.netlify/

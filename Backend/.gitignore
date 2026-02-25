@@ -1,0 +1,74 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Packages
+*.egg-info/
+.eggs/
+dist/
+build/
+wheels/
+pip-wheel-metadata/
+
+# Testing / coverage
+.pytest_cache/
+.coverage*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# Logs
+logs/
+*.log
+
+# IDE / tooling
+.vscode/
+.idea/
+*.iml
+.eslintcache
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Env/config
+.env
+.env.*
+!.env.example
+
+# Data / cache / temp
+data/
+datasets/
+cache/
+tmp/
+temp/
+uploads/
+models/
+checkpoints/
+chroma/
+chromadb/
+.ipynb_checkpoints/
+
+.env
+
+.venv/
+venv
+.venv
+# Docker artifacts
+*.tar
+*.tar.gz
+rag-backend_*.tar
+
+# Others
+coverage/

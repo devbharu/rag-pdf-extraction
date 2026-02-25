@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "D:\Naanu\Codes\CMTI\RagPipline_New\RagPipeline\Backend\rag_docling.py", line 18, in <module>
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+  File "C:\Users\SMPM\AppData\Local\Programs\Python\Python310\lib\site-packages\docling\document_converter.py", line 15, in <module>
+    from pydantic import ConfigDict, model_validator, validate_call
+ImportError: cannot import name 'ConfigDict' from 'pydantic' (C:\Users\SMPM\AppData\Local\Programs\Python\Python310\lib\site-packages\pydantic\__init__.cp310-win_amd64.pyd)
