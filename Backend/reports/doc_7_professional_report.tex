@@ -1,0 +1,75 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=0.75in]{geometry}
+\usepackage[table]{xcolor}
+\usepackage{tabularx, multirow, multicol, graphicx, helvet, siunitx, tikz, pgfplots}
+\usepackage[most]{tcolorbox}
+\renewcommand{\familydefault}{\sfdefault}
+
+%--- colour palette -------------------------------------------------
+\definecolor{CorpBlue}{HTML}{003366}
+\definecolor{CorpLightBlue}{HTML}{E6F0FA}
+\definecolor{CorpGrey}{HTML}{F4F4F4}
+\definecolor{AccentRed}{HTML}{CC0000}
+
+%--- pgfplots settings -----------------------------------------------
+\pgfplotsset{
+    compat=1.18,
+    grid style={dashed,gray!30}
+}
+
+\begin{document}
+
+%=== CORPORATE HEADER =================================================
+\noindent
+\begin{tabular}{|p{0.32\linewidth}|p{0.32\linewidth}|p{0.32\linewidth}|}
+\hline
+\textbf{Regulation Year} & \textbf{Semester} & \textbf{Credits}\\\hline
+2021 & III & Lecture: 3 \quad Tutorial: 0 \quad Practical: 0 \quad Credit Points: 3\\\hline
+\end{tabular}
+\vspace{1.5em}
+
+%=== SCOPE / SUMMARY ==================================================
+\begin{tcolorbox}[colback=CorpLightBlue,colframe=CorpBlue,
+                  title=Course Overview,
+                  fonttitle=\bfseries]
+This document presents the curriculum for the \textbf{Engineering Materials} course (Regulation 2021, Semester III). It outlines the objectives, detailed content, learning outcomes, references and supplementary material such as tables and a representative graph.
+\end{tcolorbox}
+
+%=== 1. COURSE OBJECTIVES ============================================
+\vspace{1.5em}\noindent\textcolor{CorpBlue}{\textbf{\large 1. Course Objectives}}\vspace{0.5em}
+\begin{itemize}
+    \item To learn the constructing the phase diagram and using of iron‑iron carbide phase diagram for microstructure formation.
+    \item To learn selecting and applying various heat treatment processes and its microstructure formation.
+    \item To illustrate the different types of ferrous and non‑ferrous alloys and their uses in engineering field.
+    \item To illustrate the different polymer, ceramics and composites and their uses in engineering field.
+    \item To learn the various testing procedures and failure mechanism in engineering field.
+\end{itemize}
+
+%=== 2. COURSE CONTENT ==============================================
+\vspace{1.5em}\noindent\textcolor{CorpBlue}{\textbf{\large 2. Course Content}}\vspace{0.5em}
+\rowcolors{2}{CorpGrey}{white}
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.05\linewidth}
+                         >{\raggedright\arraybackslash}X
+                         >{\centering\arraybackslash}p{0.07\linewidth}}
+\rowcolor{CorpBlue}\textcolor{white}{\textbf{No.}} &
+\textcolor{white}{\textbf{Topic}} &
+\textcolor{white}{\textbf{Credits}}\\
+1 & Constitution of alloys – Solid solutions, substitutional and interstitial – phase diagrams, Isomorphous, eutectic, eutectoid, peritectic, and peritectoid reactions, Iron‑Iron carbide equilibrium diagram. Classification of steel and cast‑Iron microstructure, properties and application. & 9\\
+2 & Definition – Full annealing, stress relief, recrystallisation and spheroidising – normalizing, hardening and tempering of steel. Isothermal transformation diagrams – cooling curves superimposed on I.T. diagram – continuous cooling Transformation (CCT) diagram – Austempering, Martempering – Hardenability, Jominy end quench test – case hardening, carburizing, Nitriding, cyaniding, carbonitriding – Flame and Induction hardening Vacuum and Plasma hardening – Thermo‑mechanical treatments – elementary ideas on sintering. & 9\\
+3 & Effect of alloying additions on steel (Mn, Si, Cr, Mo, Ni, V, Ti \& W) – stainless and tool steels – HSLA – Maraging steels – Grey, white, malleable, spheroidal – alloy cast irons, Copper and its alloys – Brass, Bronze and Cupronickel – Aluminium and its alloys; Al‑Cu – precipitation strengthening treatment – Titanium alloys, Mg‑alloys, Ni‑based – super alloys – shape memory alloys – Properties and Applications – overview of materials standards. & 9\\
+4 & Polymers – types of polymers, commodity and engineering polymers – Properties and applications of PE, PP, PS, PVC, PMMA, PET, PC, PA, ABS, PAI, PPO, PPS, PEEK, PTFE, Thermoset polymers Urea and Phenol formaldehydes – Nylon, Engineering Ceramics – Properties and applications of Al\(_2\)O\(_3\), SiC, Si\(_3\)N\(_4\), PSZ and SIALON – intermetallics – Composites – Matrix and reinforcement Materials – applications of Composites – Nano composites. & 9\\
+5 & Mechanisms of plastic deformation, slip and twinning – Types of fracture – fracture mechanics – Griffith's theory – Testing of materials under tension, compression and shear loads – Hardness tests (Brinell, Vickers and Rockwell), Micro and nano‑hardness tests, Impact test Izod and Charpy, fatigue and creep failure mechanisms. & 9\\
+\end{tabularx}
+
+%=== 3. LEARNING OUTCOMES ===========================================
+\vspace{1.5em}\noindent\textcolor{CorpBlue}{\textbf{\large 3. Learning Outcomes}}\vspace{0.5em}
+\begin{itemize}
+    \item Explain alloys and phase diagram, Iron‑Iron carbon diagram and steel classification.
+    \item Explain isothermal transformation, continuous cooling diagrams and different heat treatment processes.
+    \item Clarify the effect of alloying elements on ferrous and non‑ferrous metals.
+    \item Summarize the properties and applications of non‑metallic materials.
+    \item Explain the testing of mechanical properties.
+\end{itemize}
+
+%=== 4. REFERENCES ==================================================
+\vspace{1.5em}\noindent\textcolor{CorpBlue}{\textbf{\large

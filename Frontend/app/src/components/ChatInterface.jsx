@@ -173,37 +173,40 @@ const ChatInterface = () => {
   };
 
   // ADDED: Report Generation Logic
+  // UPDATED: LaTeX Report Generation Logic
   const handleGenerateReport = async () => {
     if (!activeDocId) return;
     setIsGeneratingReport(true);
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/generate-report`, null, {
+      const response = await axios.post(`${API_BASE_URL}/generate-latex-report`, null, {
         params: { doc_id: activeDocId },
         headers: { 'Authorization': `Bearer ${token}` },
-        responseType: 'blob' // Essential for downloading files like .docx
+        responseType: 'blob' // Essential for downloading files like .tex
       });
 
       // Create a temporary link to trigger the browser download
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      // Extract filename from activeMedia or use default
+
+      // Extract filename from activeMedia or use default, append .tex
       const originalName = activeMedia?.name ? activeMedia.name.split('.')[0] : `Doc_${activeDocId}`;
-      link.setAttribute('download', `${originalName}_Metallurgy_Report.docx`);
+      link.setAttribute('download', `${originalName}_Metallurgy_Report.tex`);
+
       document.body.appendChild(link);
       link.click();
       link.parentNode.removeChild(link);
 
-      const sysMsg = `Metallurgy report generated and downloaded successfully.`;
+      const sysMsg = `Metallurgy LaTeX report generated and downloaded successfully.`;
       setMessages(prev => [...prev, { role: 'system', content: sysMsg }]);
       if (currentSessionId) saveMessageToHistory('system', sysMsg);
 
     } catch (error) {
-      console.error("Report generation failed", error);
+      console.error("LaTeX report generation failed", error);
       const errorMsg = error.response?.status === 404
         ? 'Failed to generate report. Make sure pages 1-2 contain valid metallurgical data.'
-        : 'Error generating report. Please try again.';
+        : 'Error generating LaTeX report. Please try again.';
       setMessages(prev => [...prev, { role: 'system', content: errorMsg }]);
     } finally {
       setIsGeneratingReport(false);

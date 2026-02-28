@@ -1133,6 +1133,176 @@ CONTENT:
         filename=f"doc_{doc_id}_Metallurgy_Report.docx",
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
+
+ 
+ 
+ 
+ 
+# Helper function to run the LLM calls
+import os
+import re
+import asyncio
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
+
+# Helper function to run the LLM calls
+async def run_agent(system_prompt: str, user_content: str, response_format=None):
+    kwargs = {
+        "model": LLM_MODEL, 
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content}
+        ],
+        "temperature": 0.0 # Dropped to absolute zero for maximum factual strictness
+    }
+    if response_format:
+        kwargs["response_format"] = response_format
+
+    response = await asyncio.to_thread(
+        client.chat.completions.create,
+        **kwargs
+    )
+    return response.choices[0].message.content.strip()
+
+
+@app.post("/generate-latex-report")
+async def generate_latex_report(
+    doc_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    # -----------------------------
+    # 1. AUTH & FETCH CONTENT
+    # -----------------------------
+    owner_id = get_document_owner(doc_id)
+    if owner_id != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    chunks = get_chunks_by_doc(doc_id=doc_id, user_id=current_user["id"])
+    if not chunks:
+        raise HTTPException(status_code=404, detail="No content found.")
+    
+    chunks.sort(key=lambda x: x.get("page", 0))
+    selected_text = [c.get("text", "").strip() for c in chunks if c.get("page", 1) in [0, 1, 2, 3, 4] and c.get("text", "").strip()]
+    combined_text = "\n\n".join(selected_text)
+
+    raw_tables = get_tables_by_doc(doc_id=doc_id, user_id=current_user["id"])
+    raw_tables.sort(key=lambda x: x.get("page", 0))
+    page_filtered_tables = [t for t in raw_tables if t.get("page", 1) in [0, 1, 2, 3, 4]]
+
+    table_lines = []
+    for t_idx, t in enumerate(page_filtered_tables):
+        table_lines.append(f"\n--- [START RAW TABLE {t_idx + 1}] ---")
+        for row in t.get("rows", []):
+            table_lines.append(" | ".join(str(cell).strip() for cell in row))
+        table_lines.append(f"--- [END RAW TABLE {t_idx + 1}] ---")
+    table_summary_text = "\n".join(table_lines)
+    
+    raw_document_content = f"TEXT PARAGRAPHS:\n{combined_text}\n\nEXTRACTED TABLES:\n{table_summary_text}"
+
+    # -----------------------------
+    # AGENT 1: ZERO-LOSS DATA STRUCTURER
+    # -----------------------------
+    agent1_prompt = """
+    You are a strictly analytical Data Extraction Agent. Your ONLY job is to convert the provided text and raw tables into a structured JSON format.
+    
+    CRITICAL RULE - ZERO DATA LOSS: 
+    You are FORBIDDEN from summarizing, skipping, or truncating any data. 
+    If a table has 15 rows and 8 columns, your JSON MUST contain an exact 1:1 representation of all 15 rows and 8 columns. Every chemical element, every minimum/maximum limit, every test condition must be preserved exactly as written.
+
+    JSON STRUCTURE EXPECTED:
+    {
+      "header": {"company": "", "doc_title": "", "doc_no": "", "page_info": ""},
+      "sections": [
+        {
+          "heading": "String",
+          "content_type": "text | table | graph",
+          "text_content": "String (if type is text)",
+          "table_data": {
+             "headers": ["Col1", "Col2"],
+             "rows": [["Val1", "Val2"], ["Val3", "Val4"]]
+          }
+        }
+      ]
+    }
+    """
+    
+    structured_json_string = await run_agent(
+        system_prompt=agent1_prompt, 
+        user_content=raw_document_content,
+        response_format={"type": "json_object"}
+    )
+    await asyncio.sleep(2)
+    # -----------------------------
+    # AGENT 2: PRECISION LATEX ARCHITECT
+    # -----------------------------
+    agent2_prompt = """
+    You are a Precision LaTeX Architect. Convert the provided structured JSON into a flawless, highly professional corporate document.
+    
+    LATEX ARCHITECTURE & AESTHETICS (STRICT RULES):
+    1. Document Class: `\\documentclass[11pt,a4paper]{article}`
+    2. Required Packages: `\\usepackage[margin=0.75in]{geometry}`, `\\usepackage{tabularx, multirow, multicol, graphicx, helvet, siunitx, pgfplots, xcolor, colortbl}`
+    3. Typography: `\\renewcommand{\\familydefault}{\\sfdefault}`.
+    4. Table Padding: You MUST include `\\renewcommand{\\arraystretch}{1.5}` in the preamble to give table rows professional breathing room.
+
+    TABLE FORMATTING (CRITICAL FOR STRUCTURE):
+    - ALWAYS use the `tabularx` environment for tables, setting the width to `\\textwidth`.
+    - Do NOT use just `|c|c|c|` for long text. Use `|l|X|` where `X` allows the text to wrap professionally.
+    - Example for a complex property table: `\\begin{tabularx}{\\textwidth}{|>{\\hsize=.3\\hsize}X| >{\\hsize=.7\\hsize}X|}`
+    - You MUST place an `\\hline` before the first row, between EVERY single row, and after the last row to create a strict corporate grid.
+    - If a table cell is empty in the JSON, output a blank space, do NOT skip the `&` alignment character.
+    - Make the header row of every table bold and lightly shaded: `\\rowcolor{gray!20} \\textbf{Col1} & \\textbf{Col2} \\\\ \\hline`
+
+    DOCUMENT STRUCTURE:
+    1. CORPORATE HEADER: Create a 3-box fully bordered table at the top mimicking an engineering spec sheet.
+    2. SECTIONS: Use `\\vspace{1.5em}\\noindent\\textbf{\\large 1. YOUR SECTION NAME}\\vspace{0.5em}`.
+    3. DATA LOSS WARNING: You must render every single row provided in the JSON.
+    
+    Output ONLY raw, compile-ready LaTeX code.
+    """
+
+    draft_latex_code = await run_agent(
+        system_prompt=agent2_prompt,
+        user_content=structured_json_string
+    )
+    await asyncio.sleep(2)  
+    # -----------------------------
+    # AGENT 3: SYNTAX & ALIGNMENT REVIEWER
+    # -----------------------------
+    agent3_prompt = """
+    You are a strict LaTeX Compiler. Review the provided code for syntax errors and structural integrity.
+    
+    CRITICAL CHECKS:
+    1. Count the column definitions in every `tabularx` (e.g., `|l|X|X|` means 3 columns). Verify that EVERY row inside that table has exactly 2 ampersands (`&`). Fix any rows that have too many or too few `&` symbols.
+    2. Ensure `\\renewcommand{\\arraystretch}{1.5}` is in the preamble.
+    3. Escape all unescaped special characters (%, &, _, #, $) that are outside of math environments or table alignments.
+    
+    Return ONLY the corrected, final code. Do not wrap in markdown blocks.
+    """
+
+    final_latex_code = await run_agent(
+        system_prompt=agent3_prompt,
+        user_content=draft_latex_code
+    )
+
+    if final_latex_code.startswith("```"):
+        final_latex_code = re.sub(r"^```(?:latex)?\n", "", final_latex_code)
+        final_latex_code = re.sub(r"\n```$", "", final_latex_code)
+
+    # -----------------------------
+    # FILE SAVE & RETURN
+    # -----------------------------
+    os.makedirs("reports", exist_ok=True)
+    report_path = f"reports/doc_{doc_id}_precision_report.tex"
+
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(final_latex_code)
+
+    return FileResponse(
+        report_path,
+        filename=f"doc_{doc_id}_Report.tex",
+        media_type="application/x-tex"
+    )
+
 # @app.get("/ingest/progress/{doc_id}")
 # async def get_ingest_progress(doc_id: str):
 #     return upload_progress.get(doc_id, {"status": "unknown", "percentage": 0}
